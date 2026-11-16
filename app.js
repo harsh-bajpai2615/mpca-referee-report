@@ -1,19 +1,20 @@
 const STORE = 'mpcaRR.v1';
 const { PDFDocument, StandardFonts, rgb, LineCapStyle } = PDFLib;
 const INK = rgb(0.02, 0.13, 0.45);
-const BAD = new Set([...BAD_WORDS, 'Inadequate']);
+const BAD = new Set(BAD_WORDS);
+const NON_PRINTABLE = /[^\x20-\x7E\xA0-\xFF‘’“”–—…\n\r\t]/;
 
 let V = load();
+let revealed = new Set();
 
 function load() {
   try { return JSON.parse(localStorage.getItem(STORE)) || {}; } catch { return {}; }
 }
 function save() {
   try { localStorage.setItem(STORE, JSON.stringify(V)); } catch {}
-  document.getElementById('saved').textContent = 'Saved on this phone';
 }
-const allFields = () => SECTIONS.flatMap(s => s.fields.map(f => ({ ...f, section: s })));
-const shown = cond => !cond || [].concat(cond[1]).includes(V[cond[0]]);
+
+const $ = id => document.getElementById(id);
 const el = (tag, attrs = {}, ...kids) => {
   const n = document.createElement(tag);
   for (const [k, v] of Object.entries(attrs)) {
@@ -21,123 +22,246 @@ const el = (tag, attrs = {}, ...kids) => {
     else if (k.startsWith('on')) n.addEventListener(k.slice(2), v);
     else if (v !== undefined && v !== null && v !== false) n.setAttribute(k, v === true ? '' : v);
   }
-  for (const k of kids.flat()) if (k != null) n.append(k);
+  for (const k of kids.flat()) if (k != null && k !== false) n.append(k);
   return n;
 };
-const NON_PRINTABLE = /[^\x20-\x7E\xA0-\xFF‘’“”–—…\n\r\t]/;
+const shown = cond => !cond || [].concat(cond[1]).includes(V[cond[0]]);
+const steps = () => SECTIONS.filter(s => shown(s.showIf));
+for (const s of SECTIONS) {
+  let g = null;
+  for (const f of s.fields) { if (f.group) g = f; f.under = g; }
+}
+const allFields = () => SECTIONS.flatMap(s => s.fields.map(f => ({ ...f, section: s })));
+// "Team 2: Bhopal" for a field called "Rating", the field's own label otherwise
+const nameOf = f => (f.under && ['Rating', 'Hotel', 'Reason/s'].includes(f.label) ? groupLabel(f.under) : f.label);
+const filled = f => f.type === 'pair' ? !!(V[`${f.id}A`] || '').trim() : !!(V[f.id] || '').trim();
 
-// ---------- form ----------
+function title(s) {
+  if (s.teamRef && V[s.teamRef]) return `${s.title}: ${V[s.teamRef]}`;
+  return s.title;
+}
 
-function input(f, key = f.id, placeholder) {
-  const attrs = { id: `f-${key}`, value: V[key] || '', placeholder, inputmode: f.inputmode, autocomplete: 'off',
-    oninput: e => { V[key] = e.target.value; save(); onChange(f, key); } };
-  if (f.list) attrs.list = `l-${f.id}`;
-  const n = f.type === 'area'
-    ? el('textarea', { ...attrs, rows: 4 }, V[key] || '')
-    : el('input', { ...attrs, type: 'text' });
-  if (f.type === 'area') n.value = V[key] || '';
-  return n;
+function badRatingsFor(f) {
+  return allFields().filter(g => g.type === 'choice' && f.reasonFor.test(g.id) && BAD.has(V[g.id]) && shown(g.section.showIf));
+}
+
+// fields a step still needs, a reason box only when something it covers is rated bad
+function required(s) {
+  return s.fields.filter(f => shown(f.showIf) && (f.reasonFor ? badRatingsFor(f).length > 0 : !f.optional));
+}
+function status(s) {
+  const req = required(s);
+  const done = req.filter(filled).length;
+  const any = s.fields.some(filled);
+  return { done, total: req.length, complete: done === req.length && (any || req.length === 0), started: any };
+}
+
+// ---------- routing ----------
+
+function route() {
+  const [, view, id] = location.hash.split('/');
+  document.querySelectorAll('dialog[open]').forEach(d => d.close());
+  $('home').hidden = $('step').hidden = $('finish').hidden = true;
+  if (view === 'step' && steps().some(s => s.id === id)) renderStep(id);
+  else if (view === 'finish') renderFinish();
+  else renderHome();
+  window.scrollTo(0, 0);
+}
+const go = hash => { if (location.hash === hash) route(); else location.hash = hash; };
+
+// ---------- home ----------
+
+function renderHome() {
+  const v = $('home');
+  v.hidden = false;
+  const list = steps();
+  const st = list.map(status);
+  const doneCount = st.filter(x => x.complete).length;
+  const next = list.find((s, i) => !st[i].complete);
+
+  const teams = V.team1 && V.team2;
+  const card = el('div', { class: 'match-card' },
+    el('p', { class: 'eyebrow on-dark' }, [V.format, V.segment].filter(Boolean).join(' · ') || 'New match'),
+    el('p', { class: 'match-title' }, teams ? `${V.team1} vs ${V.team2}` : 'Start with the match details'),
+    teams ? el('p', { class: 'match-sub' }, [V.ground, V.dates].filter(Boolean).join(' · ')) : null,
+    el('div', { class: 'meter', role: 'progressbar', 'aria-label': 'Steps done', 'aria-valuemin': 0, 'aria-valuemax': list.length, 'aria-valuenow': doneCount },
+      el('span', { style: `width:${(doneCount / list.length) * 100}%` })),
+    el('p', { class: 'match-sub' }, `${doneCount} of ${list.length} steps done`));
+
+  const rows = el('ol', { class: 'steps' }, list.map((s, i) => {
+    const x = st[i];
+    return el('li', {}, el('a', { href: `#/step/${s.id}`, class: `step-row${x.complete ? ' is-done' : ''}` },
+      el('span', { class: 'step-mark', 'aria-hidden': 'true' }, x.complete ? checkIcon() : String(i + 1)),
+      el('span', { class: 'step-text' },
+        el('span', { class: 'step-name' }, title(s)),
+        el('span', { class: 'step-state' }, x.complete ? 'Done' : x.started ? `${x.done} of ${x.total} filled` : 'Not started')),
+      chevron()));
+  }));
+
+  v.replaceChildren(
+    el('header', { class: 'home-head' },
+      el('p', { class: 'eyebrow' }, 'MPCA 2026-27'),
+      el('h1', {}, 'Referee report'),
+      el('p', { class: 'lede', lang: 'hi' }, 'हर स्टेप में ऊपर फ़ॉर्म का वही हिस्सा दिखेगा जो आप भर रहे हैं।')),
+    card, rows,
+    el('div', { class: 'home-foot' },
+      el('button', { type: 'button', class: 'link danger', onclick: () => $('new-dialog').showModal() }, 'Start a new match'),
+      el('p', { class: 'fine' }, 'Answers save on this phone as you type.')));
+
+  setBar(next
+    ? [el('button', { type: 'button', class: 'pill primary', onclick: () => go(`#/step/${next.id}`) }, st.some(x => x.started) ? `Continue: ${title(next)}` : 'Start'),
+       el('button', { type: 'button', class: 'link', onclick: () => go('#/finish') }, 'Make the PDF now')]
+    : [el('button', { type: 'button', class: 'pill primary', onclick: () => go('#/finish') }, 'Make the PDF')]);
+}
+
+// ---------- step ----------
+
+function renderStep(id) {
+  const list = steps();
+  const i = list.findIndex(s => s.id === id);
+  const s = list[i];
+  const v = $('step');
+  v.hidden = false;
+
+  const snip = el('button', { type: 'button', class: 'snip', 'aria-label': `Show this part of the form, page ${s.page}, larger`, onclick: () => zoom(s.snip) },
+    el('span', { class: 'snip-tag' }, el('span', {}, `On the form, page ${s.page}`), el('span', { class: 'snip-zoom' }, 'Tap to enlarge')),
+    el('img', { src: `snips/${s.snip}.webp`, alt: `Part of the MPCA form, page ${s.page}`, decoding: 'async' }));
+
+  const notes = s.notes ? el('details', { class: 'notes' },
+    el('summary', {}, 'Pitch notes printed on the form'),
+    el('img', { src: `snips/${s.notes}.webp`, alt: 'Explanatory notes for pitch assessment from the form', loading: 'lazy' })) : null;
+
+  const body = el('div', { class: 'fields' });
+  for (const f of s.fields) {
+    if (f.group) body.append(el('h2', { class: 'group' }, groupLabel(f)));
+    body.append(fieldNode(f));
+  }
+  const more = s.fields.filter(f => f.more);
+  if (more.length) {
+    body.append(el('button', { type: 'button', class: 'link add', id: 'add-more', onclick: () => {
+      const f = more.find(g => $(`fw-${g.id}`).hidden);
+      if (f) { revealed.add(f.id); $(`fw-${f.id}`).hidden = false; $(`f-${f.id}A`).focus(); }
+      $('add-more').hidden = !more.some(g => $(`fw-${g.id}`).hidden);
+    } }, '+ Add another selector'));
+  }
+
+  v.replaceChildren(
+    el('header', { class: 'step-head' },
+      el('a', { href: '#/', class: 'back' }, chevron(true), 'All steps'),
+      el('span', { class: 'count' }, `${i + 1} of ${list.length}`)),
+    el('div', { class: 'step-title' },
+      s.num ? el('p', { class: 'eyebrow' }, `Section ${s.num}`) : null,
+      el('h1', {}, title(s)),
+      s.hi ? el('p', { class: 'lede', lang: 'hi' }, s.hi) : null),
+    ...[snip, notes, body].filter(Boolean));
+
+  for (const f of more) $(`fw-${f.id}`).hidden = !(filled(f) || revealed.has(f.id));
+  if (more.length) $('add-more').hidden = !more.some(g => $(`fw-${g.id}`).hidden);
+  refreshStep(s);
+
+  const prev = list[i - 1], next = list[i + 1];
+  setBar([
+    el('button', { type: 'button', class: 'pill ghost', onclick: () => go(prev ? `#/step/${prev.id}` : '#/') }, 'Back'),
+    el('button', { type: 'button', class: 'pill primary', onclick: () => go(next ? `#/step/${next.id}` : '#/finish') }, next ? 'Next' : 'Finish'),
+  ], 'split');
+}
+
+function groupLabel(f) {
+  const team = f.teamLabel && V[f.teamLabel];
+  return team ? `${f.group}: ${team}` : f.group;
 }
 
 function fieldNode(f) {
-  const label = el('label', { class: 'lbl', for: f.type === 'choice' ? null : `f-${f.id}${f.type === 'pair' ? 'A' : ''}` },
-    el('span', { class: 'lbl-text', 'data-label': f.id }, labelFor(f)));
-  const hint = f.hint ? el('p', { class: 'hint' }, f.hint) : null;
   const warn = el('p', { class: 'warn', id: `w-${f.id}`, hidden: true });
+  const hint = f.hint ? el('p', { class: 'hint' }, f.hint) : null;
   let body;
   if (f.type === 'choice') {
-    body = el('div', { class: `choices n${f.opts.length}`, role: 'group', 'aria-label': f.label },
+    const longest = Math.max(...f.opts.map(o => o.length));
+    const total = f.opts.reduce((n, o) => n + o.length, 0);
+    const seg = !f.chips && f.opts.length > 1 && f.opts.length <= 4 && total <= 30;
+    body = el('div', { class: seg ? 'seg' : 'chips', role: 'group', 'aria-labelledby': `l-${f.id}`, style: seg ? `--n:${f.opts.length}` : `--min:${longest * 9 + 36}px` },
       f.opts.map(o => el('button', {
-        type: 'button', class: 'choice', 'aria-pressed': String(V[f.id] === o),
+        type: 'button', 'aria-pressed': String(V[f.id] === o),
         onclick: e => {
           V[f.id] = V[f.id] === o ? '' : o;
-          e.currentTarget.parentNode.querySelectorAll('.choice').forEach(b => b.setAttribute('aria-pressed', String(b.textContent === V[f.id])));
-          save(); onChange(f, f.id);
+          e.currentTarget.parentNode.querySelectorAll('button').forEach(b => b.setAttribute('aria-pressed', String(b.textContent === V[f.id])));
+          changed(f);
         },
       }, o)));
-  } else if (f.type === 'select') {
-    body = el('select', { id: `f-${f.id}`, onchange: e => { V[f.id] = e.target.value; save(); onChange(f, f.id); } },
-      el('option', { value: '' }, 'Choose'), f.opts.map(o => el('option', { value: o, selected: V[f.id] === o }, o)));
   } else if (f.type === 'pair') {
     body = el('div', { class: 'pair' }, input(f, `${f.id}A`, f.a), input(f, `${f.id}B`, f.b));
   } else if (f.type === 'sign') {
     body = signaturePad();
   } else {
-    body = input(f);
+    body = input(f, f.id, f.placeholder);
   }
-  const list = f.list ? el('datalist', { id: `l-${f.id}` }, f.list.map(o => el('option', { value: o }))) : null;
-  return el('div', { class: `field t-${f.type}`, id: `fw-${f.id}`, hidden: !shown(f.showIf) }, label, hint, body, list, warn);
+  const suffix = f.suffix ? el('p', { class: 'hint' }, `Printed before “${f.suffix}”`) : null;
+  return el('div', { class: `field t-${f.type}`, id: `fw-${f.id}`, hidden: !shown(f.showIf) },
+    el('label', { class: 'label', id: `l-${f.id}`, for: f.type === 'choice' || f.type === 'sign' ? null : `f-${f.id}${f.type === 'pair' ? 'A' : ''}` }, f.label),
+    hint, suffix, body,
+    f.list ? el('datalist', { id: `dl-${f.id}` }, f.list.map(o => el('option', { value: o }))) : null,
+    warn);
 }
 
-function labelFor(f) {
-  const team = f.teamLabel && V[f.teamLabel];
-  return team ? f.label.replace(/^Team \d/, `${f.teamLabel === 'team1' ? 'Team 1' : 'Team 2'} (${team})`) : f.label;
+function input(f, key, placeholder) {
+  const attrs = {
+    id: `f-${key}`, placeholder, inputmode: f.inputmode, autocomplete: 'off', autocapitalize: 'words', list: f.list ? `dl-${f.id}` : null,
+    'aria-label': f.type === 'pair' ? `${f.label} ${placeholder}` : null,
+    oninput: e => { V[key] = e.target.value; changed(f); },
+  };
+  const n = f.type === 'area' ? el('textarea', { ...attrs, rows: 4, autocapitalize: 'sentences' }) : el('input', { ...attrs, type: 'text' });
+  n.value = V[key] || '';
+  return n;
 }
 
-function render() {
-  const form = document.getElementById('form');
-  const nav = document.getElementById('jump');
-  for (const s of SECTIONS) {
-    const head = el('header', { class: 'sec-head' },
-      s.num ? el('span', { class: 'sec-num' }, s.num) : null,
-      el('div', {}, el('h2', { 'data-team': s.teamRef || null }, sectionTitle(s)), s.hi ? el('p', { class: 'sec-hi', lang: 'hi' }, s.hi) : null));
-    form.append(el('section', { class: 'sec', id: `sec-${s.id}`, hidden: !shown(s.showIf) }, head, s.fields.map(fieldNode)));
-    nav.append(el('option', { value: s.id }, `${s.num ? s.num + '. ' : ''}${s.title}`));
+function changed(f) {
+  save();
+  const s = SECTIONS.find(x => x.fields.some(g => g.id === f.id));
+  for (const g of s.fields) {
+    const w = $(`fw-${g.id}`);
+    if (w && g.showIf) w.hidden = !shown(g.showIf);
   }
-  refreshWarnings();
+  refreshStep(s);
 }
 
-function sectionTitle(s) {
-  if (!s.teamRef) return s.title;
-  return V[s.teamRef] ? `${s.title} (${V[s.teamRef]})` : s.title;
-}
-
-function onChange(f, key) {
-  if (NON_PRINTABLE.test(V[key] || '')) showWarn(f.id, 'Please type in English. The PDF cannot print Hindi letters.');
-  if (['team1', 'team2'].includes(key)) {
-    document.querySelectorAll('[data-label]').forEach(n => { const g = allFields().find(x => x.id === n.dataset.label); n.textContent = labelFor(g); });
-    document.querySelectorAll('[data-team]').forEach(n => { n.textContent = sectionTitle(SECTIONS.find(s => s.teamRef === n.dataset.team)); });
+function refreshStep(s) {
+  for (const f of s.fields) {
+    let msg = '';
+    const vals = [V[f.id], V[`${f.id}A`], V[`${f.id}B`]];
+    if (vals.some(x => NON_PRINTABLE.test(x || ''))) msg = 'Please type in English. The PDF cannot print Hindi letters.';
+    else if (f.reasonFor && !(V[f.id] || '').trim()) {
+      const bad = badRatingsFor(f);
+      if (bad.length) msg = `Needed, because ${bad.map(b => `${nameOf(b)} is marked ${V[b.id]}`).join(', ')}.`;
+    }
+    const w = $(`w-${f.id}`);
+    if (w) { w.textContent = msg; w.hidden = !msg; }
   }
-  for (const s of SECTIONS) {
-    document.getElementById(`sec-${s.id}`).hidden = !shown(s.showIf);
-    for (const g of s.fields) document.getElementById(`fw-${g.id}`).hidden = !shown(g.showIf);
-  }
-  refreshWarnings();
 }
 
-function showWarn(id, msg) {
-  const w = document.getElementById(`w-${id}`);
-  if (!w) return;
-  w.textContent = msg || '';
-  w.hidden = !msg;
+function setBar(kids, mode = '') {
+  $('bar').className = `bar ${mode}`;
+  $('bar').replaceChildren(el('div', { class: 'bar-in' }, ...kids));
 }
 
-// a reason box that is still empty while a rating it covers is bad
-function missingReasons() {
-  const out = [];
-  for (const f of allFields()) {
-    if (!f.reasonFor || !shown(f.section.showIf)) continue;
-    const bad = allFields().filter(g => g.type === 'choice' && f.reasonFor.test(g.id) && BAD.has(V[g.id]));
-    if (bad.length && !(V[f.id] || '').trim()) out.push({ f, bad });
-  }
-  return out;
+function zoom(name) {
+  $('zoom-frame').replaceChildren(el('img', { src: `snips/${name}.webp`, alt: 'Part of the MPCA form, larger' }));
+  $('zoom').showModal();
 }
 
-function refreshWarnings() {
-  for (const f of allFields()) {
-    if (f.reasonFor) showWarn(f.id, '');
-    else if (!NON_PRINTABLE.test(V[f.id] || '') && !NON_PRINTABLE.test(V[`${f.id}A`] || '') && !NON_PRINTABLE.test(V[`${f.id}B`] || '')) showWarn(f.id, '');
-  }
-  for (const { f, bad } of missingReasons()) showWarn(f.id, `Needed: you rated ${bad.map(b => b.label.replace(/:.*$/, '')).join(', ')} as ${[...new Set(bad.map(b => V[b.id]))].join(' / ')}.`);
-  const total = allFields().filter(f => shown(f.section.showIf) && shown(f.showIf) && f.type !== 'sign' && f.id !== 'extra' && f.type !== 'pair');
-  const done = total.filter(f => (V[f.id] || '').trim()).length;
-  document.getElementById('progress').textContent = `${done} of ${total.length} answered`;
-}
+const svg = (d, cls) => {
+  const s = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  s.setAttribute('viewBox', '0 0 24 24'); s.setAttribute('aria-hidden', 'true'); s.setAttribute('class', cls);
+  const p = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+  p.setAttribute('d', d); s.append(p);
+  return s;
+};
+const chevron = left => svg(left ? 'M15 5l-7 7 7 7' : 'M9 5l7 7-7 7', 'chev');
+const checkIcon = () => svg('M5 12.5l4.5 4.5L19 7.5', 'tick');
 
 // ---------- signature ----------
 
 function signaturePad() {
-  const c = el('canvas', { class: 'sig', width: 900, height: 260, 'aria-label': 'Signature pad' });
+  const c = el('canvas', { class: 'sig', width: 900, height: 300, 'aria-label': 'Signature pad' });
   const g = c.getContext('2d');
   const paint = () => {
     g.clearRect(0, 0, c.width, c.height);
@@ -149,11 +273,11 @@ function signaturePad() {
     };
     img.src = V.signature;
   };
-  let drawing = false, dirty = false;
+  let drawing = false, fresh = true;
   const pt = e => { const r = c.getBoundingClientRect(); return [(e.clientX - r.left) * c.width / r.width, (e.clientY - r.top) * c.height / r.height]; };
   c.addEventListener('pointerdown', e => {
-    if (!dirty && V.signature) { g.clearRect(0, 0, c.width, c.height); }
-    drawing = dirty = true; c.setPointerCapture(e.pointerId);
+    if (fresh && V.signature) g.clearRect(0, 0, c.width, c.height);
+    fresh = false; drawing = true; c.setPointerCapture(e.pointerId);
     g.lineWidth = 7; g.lineCap = g.lineJoin = 'round'; g.strokeStyle = '#0a2a73';
     g.beginPath(); g.moveTo(...pt(e));
   });
@@ -161,14 +285,13 @@ function signaturePad() {
   const end = () => { if (!drawing) return; drawing = false; V.signature = trimmed(c); save(); };
   c.addEventListener('pointerup', end);
   c.addEventListener('pointercancel', end);
-  const clear = el('button', { type: 'button', class: 'btn-quiet', onclick: () => { V.signature = ''; dirty = false; save(); paint(); } }, 'Clear signature');
   paint();
-  return el('div', { class: 'sig-wrap' }, c, clear);
+  return el('div', { class: 'sig-wrap' }, c,
+    el('button', { type: 'button', class: 'link', onclick: () => { V.signature = ''; fresh = true; save(); paint(); } }, 'Clear and sign again'));
 }
 
 function trimmed(c) {
-  const g = c.getContext('2d');
-  const { data, width, height } = g.getImageData(0, 0, c.width, c.height);
+  const { data, width, height } = c.getContext('2d').getImageData(0, 0, c.width, c.height);
   let x0 = width, y0 = height, x1 = -1, y1 = -1;
   for (let y = 0; y < height; y++) for (let x = 0; x < width; x++) {
     if (data[(y * width + x) * 4 + 3] > 10) { if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; }
@@ -178,6 +301,91 @@ function trimmed(c) {
   out.width = x1 - x0 + pad * 2; out.height = y1 - y0 + pad * 2;
   out.getContext('2d').drawImage(c, x0 - pad, y0 - pad, out.width, out.height, 0, 0, out.width, out.height);
   return out.toDataURL('image/png');
+}
+
+// ---------- finish ----------
+
+let ready = null;
+
+function renderFinish() {
+  const v = $('finish');
+  v.hidden = false;
+  const issues = checks();
+  v.replaceChildren(
+    el('header', { class: 'step-head' }, el('a', { href: '#/', class: 'back' }, chevron(true), 'All steps')),
+    el('div', { class: 'step-title' },
+      el('h1', {}, 'Your report'),
+      el('p', { class: 'lede', lang: 'hi' }, 'PDF बन रही है। फिर WhatsApp या Mail से भेजें।')),
+    el('div', { class: 'file' },
+      el('span', { class: 'file-icon', 'aria-hidden': 'true' }, 'PDF'),
+      el('span', { class: 'file-text' }, el('span', { class: 'file-name' }, fileName()), el('span', { class: 'fine', id: 'prep' }, 'Making the PDF...'))),
+    issues.length ? el('div', { class: 'issues' },
+      el('h2', { class: 'group' }, 'Worth a look before sending'),
+      el('ul', {}, issues.map(([t, step]) => el('li', {}, el('span', {}, t), step ? el('a', { href: `#/step/${step}`, class: 'link' }, 'Fix') : null)))) : null,
+    el('div', { class: 'send-note' },
+      el('h2', { class: 'group' }, 'Send within 72 hours to'),
+      el('p', {}, 'cricket.operations@mpcaonline.com'),
+      el('p', {}, 'moreports@mpcaonline.com'),
+      el('p', { class: 'fine' }, 'or in a sealed envelope to the MPCA office')));
+  setBar([
+    el('button', { type: 'button', class: 'pill ghost act', disabled: true, onclick: downloadPdf }, 'Save to Files'),
+    el('button', { type: 'button', class: 'pill primary act', disabled: true, onclick: sharePdf }, 'Share'),
+  ], 'split');
+  prepare();
+}
+
+function checks() {
+  const out = [];
+  if (!V.format) out.push(['Format is not chosen, so no pitch page will be filled.', 'match']);
+  if (!V.refName) out.push(["Referee's name is empty.", 'match']);
+  for (const s of steps()) {
+    for (const f of s.fields) if (f.reasonFor && badRatingsFor(f).length && !(V[f.id] || '').trim()) out.push([`${title(s)}: the reason box is empty but something is marked bad.`, s.id]);
+  }
+  for (const s of steps()) {
+    for (const f of s.fields) {
+      if ([V[f.id], V[`${f.id}A`], V[`${f.id}B`]].some(x => NON_PRINTABLE.test(x || ''))) out.push([`${title(s)}: ${f.label} has Hindi letters the PDF cannot print.`, s.id]);
+    }
+  }
+  if (!V.signature) out.push(['No signature yet. Sign in the app, or by hand after printing.', 'sign']);
+  return out;
+}
+
+async function prepare() {
+  ready = null;
+  try {
+    const bytes = await buildPdf();
+    ready = new File([bytes], fileName(), { type: 'application/pdf' });
+    if ($('prep')) $('prep').textContent = 'Ready to send';
+    document.querySelectorAll('.act').forEach(b => (b.disabled = false));
+  } catch (e) {
+    if ($('prep')) $('prep').textContent = `Could not make the PDF: ${e.message}`;
+  }
+}
+
+// Safari only allows share() straight after a tap, so the file is built before the tap
+function sharePdf() {
+  if (!ready) return;
+  if (navigator.canShare && navigator.canShare({ files: [ready] })) {
+    navigator.share({ files: [ready], title: ready.name })
+      .then(() => { $('prep').textContent = 'Shared'; })
+      .catch(e => { if (e.name !== 'AbortError') $('prep').textContent = `Could not share: ${e.message}`; });
+  } else {
+    downloadPdf();
+  }
+}
+
+function downloadPdf() {
+  if (!ready) return;
+  const a = el('a', { href: URL.createObjectURL(ready), download: ready.name });
+  document.body.append(a); a.click(); a.remove();
+}
+
+function newMatch() {
+  V = Object.fromEntries(allFields().filter(f => f.keep).map(f => [f.id, V[f.id]]));
+  revealed = new Set();
+  save();
+  $('new-dialog').close();
+  go('#/');
 }
 
 // ---------- PDF ----------
@@ -294,10 +502,13 @@ async function buildPdf() {
     if (!shown(s.showIf)) continue;
     for (const f of s.fields) {
       if (!shown(f.showIf)) continue;
-      if (f.type === 'choice') (f.put[V[f.id]] || []).forEach(mark);
-      else if (f.type === 'pair') {
-        f.putA.forEach(pl => text(pl, clean(V[`${f.id}A`]), `${f.label}: ${f.a}`));
-        f.putB.forEach(pl => text(pl, clean(V[`${f.id}B`]), `${f.label}: ${f.b}`));
+      const label = `${title(s)}: ${f.group ? `${groupLabel(f)}, ` : ''}${f.label}`;
+      if (f.type === 'choice') {
+        (f.put[V[f.id]] || []).forEach(mark);
+        if (f.printAs && V[f.id]) text(f.printAs, clean(V[f.id]), label);
+      } else if (f.type === 'pair') {
+        f.putA.forEach(pl => text(pl, clean(V[`${f.id}A`]), `${label}, ${f.a}`));
+        f.putB.forEach(pl => text(pl, clean(V[`${f.id}B`]), `${label}, ${f.b}`));
       } else if (f.type === 'sign') {
         if (!V.signature) continue;
         const img = await doc.embedPng(V.signature);
@@ -307,7 +518,7 @@ async function buildPdf() {
         }
       } else {
         const val = clean(V[f.id]);
-        if (val) (f.put || []).forEach(pl => text(pl, clean((f.prefix || '') + val), f.label));
+        if (val) (f.put || []).forEach(pl => text(pl, clean((f.prefix || '') + val), label));
       }
     }
   }
@@ -342,7 +553,7 @@ function supplement(doc, items, font, bold, clean) {
   page.drawText('SUPPLEMENT TO THE REPORT BY THE REFEREE', { x: L, y: H - y, size: 12, font: bold, color: rgb(0, 0, 0) });
   y += 18;
   const who = [V.tournament, V.team1 && V.team2 ? `${V.team1} vs ${V.team2}` : '', V.ground, V.dates].map(clean).filter(Boolean).join('  |  ');
-  if (who) { wrapW(who, font, 9).forEach(s => line(s, font, 9)); }
+  if (who) wrapW(who, font, 9).forEach(s => line(s, font, 9));
   y += 10;
   for (const [label, s] of items) {
     y += 4;
@@ -353,89 +564,15 @@ function supplement(doc, items, font, bold, clean) {
   if (V.refName) { y += 14; line(`Name of the Referee: ${clean(V.refName)}`, bold); }
 }
 
-let ready = null;
-
-async function prepare() {
-  ready = null;
-  const status = document.getElementById('prep');
-  document.querySelectorAll('.act').forEach(b => (b.disabled = true));
-  status.textContent = 'Making the PDF...';
-  try {
-    const bytes = await buildPdf();
-    ready = new File([bytes], fileName(), { type: 'application/pdf' });
-    status.textContent = `Ready: ${ready.name}`;
-    document.querySelectorAll('.act').forEach(b => (b.disabled = false));
-  } catch (e) {
-    status.textContent = `Could not make the PDF: ${e.message}`;
-  }
-}
-
-// Safari only allows share() straight after a tap, so the file is built before the tap
-function sharePdf() {
-  if (!ready) return;
-  const status = document.getElementById('prep');
-  if (navigator.canShare && navigator.canShare({ files: [ready] })) {
-    navigator.share({ files: [ready], title: ready.name })
-      .then(() => { status.textContent = `Shared ${ready.name}`; })
-      .catch(e => { status.textContent = e.name === 'AbortError' ? 'Sharing cancelled' : `Could not share: ${e.message}`; });
-  } else {
-    downloadPdf();
-    status.textContent = `This browser cannot share files, so ${ready.name} was downloaded instead`;
-  }
-}
-
-function downloadPdf() {
-  if (!ready) return;
-  const a = el('a', { href: URL.createObjectURL(ready), download: ready.name });
-  document.body.append(a); a.click(); a.remove();
-}
-
-function checks() {
-  const out = [];
-  if (!V.format) out.push('Choose the format (multi-day / one day / T20), so the right pitch page is filled.');
-  if (!V.refName) out.push("Referee's name is empty.");
-  if (!V.signature) out.push('No signature yet. Sign in the last section, or sign by hand after printing.');
-  for (const { f } of missingReasons()) out.push(`${f.section.title}: reason box is empty but a rating is bad.`);
-  for (const f of allFields()) {
-    for (const k of [f.id, `${f.id}A`, `${f.id}B`]) if (NON_PRINTABLE.test(V[k] || '')) { out.push(`${f.label}: has Hindi or other letters the PDF cannot print.`); break; }
-  }
-  return out;
-}
-
-function openCheck() {
-  const list = checks();
-  const ul = document.getElementById('check-list');
-  ul.replaceChildren(...list.map(t => el('li', {}, t)));
-  document.getElementById('check-ok').hidden = list.length > 0;
-  document.getElementById('check-dialog').showModal();
-  prepare();
-}
-
-function newMatch() {
-  const keep = Object.fromEntries(allFields().filter(f => f.keep).map(f => [f.id, V[f.id]]));
-  const old = V;
-  V = keep; save();
-  document.getElementById('form').replaceChildren();
-  document.getElementById('jump').replaceChildren(el('option', { value: '' }, 'Jump to section'));
-  render();
-  document.getElementById('new-dialog').close();
-  window.scrollTo(0, 0);
-  return old;
-}
+// ---------- start ----------
 
 document.addEventListener('DOMContentLoaded', () => {
-  render();
-  document.getElementById('jump').addEventListener('change', e => {
-    if (e.target.value) document.getElementById(`sec-${e.target.value}`).scrollIntoView({ behavior: 'smooth' });
-    e.target.value = '';
-  });
-  document.getElementById('make').addEventListener('click', openCheck);
-  document.getElementById('do-share').addEventListener('click', sharePdf);
-  document.getElementById('do-download').addEventListener('click', downloadPdf);
-  document.getElementById('new').addEventListener('click', () => document.getElementById('new-dialog').showModal());
-  document.getElementById('new-yes').addEventListener('click', newMatch);
+  window.addEventListener('hashchange', route);
+  route();
+  $('new-yes').addEventListener('click', newMatch);
   document.querySelectorAll('[data-close]').forEach(b => b.addEventListener('click', () => b.closest('dialog').close()));
+  $('zoom').addEventListener('click', () => $('zoom').close());
   if ('serviceWorker' in navigator && location.protocol === 'https:') navigator.serviceWorker.register('sw.js');
 });
 
-window.__test = { buildPdf, setValues: v => { V = v; save(); }, fileName };
+window.__test = { buildPdf, fileName, setValues: v => { V = v; save(); route(); } };
