@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Referee Report</title>
+<meta name="description" content="Fill the MPCA Match Referee Report 2026-27 on the phone and get the PDF in the prescribed format.">
+<meta name="theme-color" content="#1d5a43">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Referee Report">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<link rel="apple-touch-icon" href="icon-180.png">
+<link rel="icon" href="icon-192.png">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="top">
+  <div class="top-row">
+    <div>
+      <h1>Referee Report</h1>
+      <p class="sub">MPCA match referee report 2026-27</p>
+    </div>
+    <button type="button" id="new" class="btn-quiet">New match</button>
+  </div>
+  <div class="top-row">
+    <select id="jump" aria-label="Jump to section"><option value="">Jump to section</option></select>
+    <span id="progress" class="meta"></span>
+  </div>
+</header>
+
+<main>
+  <div class="intro">
+    <p>Fill what you saw at the match, in English. Tap a rating again to clear it. Everything saves on this phone as you type, so you can fill it over all the match days.</p>
+    <p lang="hi">जो देखा वह भरें, अंग्रेज़ी में। सब अपने आप इसी फ़ोन में सेव होता है। आख़िर में नीचे वाला बटन दबाकर PDF बनाएं।</p>
+    <p class="meta" id="saved"></p>
+  </div>
+  <form id="form" onsubmit="return false"></form>
+  <div class="send-note">
+    <p>Send within 72 hours of the match to <strong>cricket.operations@mpcaonline.com</strong> and <strong>moreports@mpcaonline.com</strong>, or in a sealed envelope to the MPCA office.</p>
+  </div>
+</main>
+
+<div class="bar">
+  <button type="button" id="make" class="btn">Make the PDF</button>
+</div>
+
+<dialog id="check-dialog" aria-labelledby="check-title">
+  <h2 id="check-title">Before you send</h2>
+  <p id="check-ok">Everything important is filled.</p>
+  <ul id="check-list"></ul>
+  <p class="meta" id="prep"></p>
+  <div class="dlg-actions">
+    <button type="button" id="do-share" class="btn act" disabled>Share (WhatsApp, Mail)</button>
+    <button type="button" id="do-download" class="btn-quiet act" disabled>Save to Files</button>
+    <button type="button" class="btn-quiet" data-close>Back to the form</button>
+  </div>
+</dialog>
+
+<dialog id="new-dialog" aria-labelledby="new-title">
+  <h2 id="new-title">Start a new match ?</h2>
+  <p>This clears this match's answers. Your name and signature stay. Make and send the PDF of this match first.</p>
+  <div class="dlg-actions">
+    <button type="button" id="new-yes" class="btn danger">Clear and start new</button>
+    <button type="button" class="btn-quiet" data-close>Keep this match</button>
+  </div>
+</dialog>
+
+<script src="pdf-lib.min.js"></script>
+<script src="spec.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
