@@ -98,8 +98,8 @@ const SECTIONS = [
     id: 'practice', num: '4', title: 'Practice facilities', hi: 'मैच से एक दिन पहले की प्रैक्टिस', page: 3, snip: 'practice',
     fields: [
       { id: 'pConv', label: 'Local conveyance for the visiting team', type: 'choice', opts: ['Yes', 'No'], put: { Yes: [tick(3, 316, 608.5)], No: [tick(3, 314, 631)] } },
-      { id: 'pVehicle', label: 'Type of vehicle', showIf: ['pConv', 'Yes'], type: 'text', put: [{ p: 3, x: 403, b: 612, w: 98 }] },
-      { id: 'pConvReason', label: 'Reason', showIf: ['pConv', 'No'], type: 'text', put: [{ p: 3, x: 368, b: 634.5, w: 133 }] },
+      { id: 'pVehicle', label: 'Type of vehicle', showIf: ['pConv', 'Yes'], type: 'text', put: [{ p: 3, x: 403, b: 612, w: 98, room: [605, 624.5] }] },
+      { id: 'pConvReason', label: 'Reason', showIf: ['pConv', 'No'], type: 'text', put: [{ p: 3, x: 368, b: 634.5, w: 133, room: [626, 646.5] }] },
       { id: 'pDuration', label: 'Duration of nets', type: 'text', placeholder: '2.5 hours', put: [{ p: 3, cell: [276, 648, 503, 670] }] },
       { id: 'pNets', label: 'No. of nets', type: 'text', inputmode: 'numeric', put: [{ p: 3, cell: [276, 670, 503, 692] }] },
       { id: 'pCoord', label: 'Coordinator present for visiting teams', type: 'choice', opts: ['Yes', 'No'], put: { Yes: [tick(3, 316, 697)], No: [tick(3, 368, 697)] } },
@@ -110,7 +110,7 @@ const SECTIONS = [
   {
     id: 'ground1', num: '5', title: 'Ground: transport, rooms, staff', hi: 'गाड़ी, ड्रेसिंग रूम, ग्राउंड स्टाफ', page: 4, snip: 'ground1',
     fields: [
-      { id: 'gVehicle', group: 'Local conveyance for visiting team', label: 'Vehicle type', type: 'text', put: [{ p: 4, x: 198, b: 78, w: 56 }] },
+      { id: 'gVehicle', group: 'Local conveyance for visiting team', label: 'Vehicle type', type: 'text', put: [{ p: 4, x: 198, b: 78, w: 56, room: [71, 89] }] },
       { id: 'gCapacity', label: 'Capacity', type: 'text', inputmode: 'numeric', put: [{ p: 4, x: 304, b: 78, w: 63 }] },
       { id: 'gPunct', label: 'Punctuality', type: 'text', put: [{ p: 4, x: 195, b: 96.5, w: 171 }] },
       { id: 'gEffect', label: 'Overall effectiveness', type: 'text', put: [{ p: 4, x: 238, b: 115, w: 128 }] },
@@ -128,8 +128,8 @@ const SECTIONS = [
   {
     id: 'ground2', num: '5', title: 'Ground: equipment', hi: 'रोलर, बाउंड्री, कवर, स्कोरबोर्ड', page: 4, snip: 'ground2',
     fields: [
-      { id: 'rollMech', group: 'Rollers', label: 'Mechanical', type: 'text', placeholder: 'nos., weight, condition', put: [{ p: 4, x: 155, b: 335.5, w: 211 }] },
-      { id: 'rollManual', label: 'Manual', type: 'text', placeholder: 'nos., weight, condition', prefix: 'Manual: ', put: [{ p: 4, x: 140, b: 345.3, w: 226, size: 7.5 }] },
+      { id: 'rollMech', group: 'Rollers', label: 'Mechanical', type: 'text', placeholder: 'nos., weight, condition', put: [{ p: 4, x: 155, b: 335.5, w: 211, room: [325, 337] }] },
+      { id: 'rollManual', label: 'Manual', type: 'text', placeholder: 'nos., weight, condition', prefix: 'Manual: ', put: [{ p: 4, x: 140, b: 345.3, w: 226, size: 7.5, room: [338, 347] }] },
       rate('rollRate', 'Rating', GROUND, 4, 289, 348),
       rate('gBoundary', 'Boundary marking', GROUND, 4, 348, 404, { group: 'Ratings' }),
       rate('gScoreboard', 'Scoreboard', GROUND, 4, 404, 433),
@@ -194,7 +194,6 @@ const SECTIONS = [
     id: 'sign', num: '', title: 'Signature', hi: 'हस्ताक्षर', page: 7, snip: 'sign',
     fields: [
       { id: 'signature', label: 'Sign with your finger', hint: 'Done once, kept for every match', type: 'sign', keep: true, optional: true, put: [{ p: 7, img: [342, 606, 490, 634] }] },
-      { id: 'extra', group: 'Anything else', label: 'Other remarks', hint: 'Optional. Goes on an extra page at the end', type: 'area', optional: true, put: [] },
     ],
   },
 ];

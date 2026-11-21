@@ -403,11 +403,9 @@ function fileName() {
 async function buildPdf() {
   const doc = await PDFDocument.load(await (await fetch('form.pdf')).arrayBuffer());
   const font = await doc.embedFont(StandardFonts.Helvetica);
-  const bold = await doc.embedFont(StandardFonts.HelveticaBold);
   const pages = doc.getPages();
   const H = pages[0].getHeight();
   const chars = new Set(font.getCharacterSet());
-  const annex = [];
   const clean = s => [...String(s || '').replace(/\r/g, '').replace(/\t/g, ' ')].filter(ch => ch === '\n' || chars.has(ch.codePointAt(0))).join('').trim();
   const width = (s, size) => font.widthOfTextAtSize(s, size);
   const write = (p, s, x, base, size) => pages[p - 1].drawText(s, { x, y: H - base, size, font, color: INK });
@@ -431,24 +429,34 @@ async function buildPdf() {
     return lines;
   }
 
-  function cut(s, w, size) {
-    while (s.length > 1 && width(s + '...', size) > w) s = s.slice(0, -1);
-    return s.trimEnd() + '...';
+  const shrink = (s, w, size) => Math.min(size, size * w / width(s, size));
+
+  // stacked lines inside [top, bottom], last baseline near the bottom
+  function stack(p, s, x, w, top, bottom, max, min) {
+    for (let size = max; size >= min; size -= 0.25) {
+      const lines = wrap(s, w, size), lead = size * 1.1, last = bottom - size * 0.2;
+      if (lines.length > 1 && lines.every(l => width(l, size) <= w) && last - (lines.length - 1) * lead - size * 0.72 >= top) {
+        lines.forEach((l, i) => write(p, l, x, last - (lines.length - 1 - i) * lead, size));
+        return true;
+      }
+    }
+    return false;
   }
 
-  function text(pl, s, label) {
+  function text(pl, s) {
     if (!s) return;
-    if (pl.box) return box(pl, s, label);
-    if (pl.cell) return cell(pl, s, label);
+    if (pl.box) return box(pl, s);
+    if (pl.cell) return cell(pl, s);
     const one = s.replace(/\n+/g, ', ');
     for (let size = pl.size || 9; size >= 6; size -= 0.25) {
       if (width(one, size) <= pl.w) return write(pl.p, one, pl.x, pl.b, size);
     }
-    write(pl.p, cut(one, pl.w, 6), pl.x, pl.b, 6);
-    annex.push([label, s]);
+    const [top, bottom] = pl.room || [pl.b - 10, pl.b + 1];
+    if (stack(pl.p, one, pl.x, pl.w, top, bottom, 7, 4.5)) return;
+    write(pl.p, one, pl.x, pl.b, shrink(one, pl.w, 6));
   }
 
-  function cell(pl, s, label) {
+  function cell(pl, s) {
     const [x0, y0, x1, y1] = pl.cell, pad = 3, w = x1 - x0 - pad * 2, m = (y0 + y1) / 2;
     const one = s.replace(/\n+/g, ', ');
     for (let size = 9; size >= 7; size -= 0.25) {
@@ -466,24 +474,20 @@ async function buildPdf() {
     for (let size = 7; size >= 6; size -= 0.25) {
       if (width(one, size) <= w) return write(pl.p, one, x0 + pad, m + size * 0.35, size);
     }
-    write(pl.p, cut(one, w, 6), x0 + pad, m + 2, 6);
-    annex.push([label, s]);
+    if (stack(pl.p, one, x0 + pad, w, y0 + 1, y1 - 1, 6, 4)) return;
+    const size = shrink(one, w, 6);
+    write(pl.p, one, x0 + pad, m + size * 0.35, size);
   }
 
-  function box(pl, s, label) {
+  function box(pl, s) {
     const [x0, y0, x1, y1] = pl.box, pad = pl.pad ?? 4, w = x1 - x0 - pad * 2, h = y1 - y0 - pad * 2;
-    for (let size = 9.5; size >= 6; size -= 0.25) {
+    for (let size = 9.5; size >= 1; size -= 0.25) {
       const lines = wrap(s, w, size), lead = size * 1.2;
       if (lines.length * lead <= h + size * 0.25) {
         lines.forEach((l, i) => write(pl.p, l, x0 + pad, y0 + pad + size * 0.85 + i * lead, size));
         return;
       }
     }
-    const size = 6.5, lead = size * 1.2, fit = Math.max(1, Math.floor(h / lead));
-    const lines = wrap(s, w, size).slice(0, fit - 1);
-    lines.push('(continued on the supplement page at the end)');
-    lines.forEach((l, i) => write(pl.p, l, x0 + pad, y0 + pad + size * 0.85 + i * lead, size));
-    annex.push([label, s]);
   }
 
   function mark(m) {
@@ -505,13 +509,12 @@ async function buildPdf() {
     if (!shown(s.showIf)) continue;
     for (const f of s.fields) {
       if (!shown(f.showIf)) continue;
-      const label = `${title(s)}: ${f.group ? `${groupLabel(f)}, ` : ''}${f.label}`;
       if (f.type === 'choice') {
         (f.put[V[f.id]] || []).forEach(mark);
-        if (f.printAs && V[f.id]) text(f.printAs, clean(V[f.id]), label);
+        if (f.printAs && V[f.id]) text(f.printAs, clean(V[f.id]));
       } else if (f.type === 'pair') {
-        f.putA.forEach(pl => text(pl, clean(V[`${f.id}A`]), `${label}, ${f.a}`));
-        f.putB.forEach(pl => text(pl, clean(V[`${f.id}B`]), `${label}, ${f.b}`));
+        f.putA.forEach(pl => text(pl, clean(V[`${f.id}A`])));
+        f.putB.forEach(pl => text(pl, clean(V[`${f.id}B`])));
       } else if (f.type === 'sign') {
         if (!V.signature) continue;
         const img = await doc.embedPng(V.signature);
@@ -521,50 +524,17 @@ async function buildPdf() {
         }
       } else {
         const val = clean(V[f.id]);
-        if (val) (f.put || []).forEach(pl => text(pl, clean((f.prefix || '') + val), label));
+        if (val) (f.put || []).forEach(pl => text(pl, clean((f.prefix || '') + val)));
       }
     }
   }
   if (pitchPage) {
-    for (const [k, pl] of Object.entries(PITCH_HEADERS[pitchPage])) text({ p: pitchPage, ...pl }, clean(V[k]), k);
+    for (const [k, pl] of Object.entries(PITCH_HEADERS[pitchPage])) text({ p: pitchPage, ...pl }, clean(V[k]));
   }
-
-  const extra = clean(V.extra);
-  if (extra) annex.unshift(['Other remarks', extra]);
-  if (annex.length) supplement(doc, annex, font, bold, clean);
 
   doc.setTitle(fileName().replace(/\.pdf$/, ''));
   doc.setModificationDate(new Date());
   return doc.save();
-}
-
-function supplement(doc, items, font, bold, clean) {
-  const [W, H] = [545.04, 842.04], L = 46, R = W - 46, size = 9.5, lead = 13;
-  let page, y;
-  const fresh = () => { page = doc.addPage([W, H]); y = 60; };
-  const line = (s, f = font, sz = size) => { if (y > H - 70) fresh(); page.drawText(s, { x: L, y: H - y, size: sz, font: f, color: INK }); y += lead; };
-  const wrapW = (s, f, sz) => {
-    const out = [];
-    for (const para of s.split('\n')) {
-      let cur = '';
-      for (const w of para.split(/ +/)) { const t = cur ? `${cur} ${w}` : w; if (f.widthOfTextAtSize(t, sz) <= R - L) cur = t; else { out.push(cur); cur = w; } }
-      out.push(cur);
-    }
-    return out;
-  };
-  fresh();
-  page.drawText('SUPPLEMENT TO THE REPORT BY THE REFEREE', { x: L, y: H - y, size: 12, font: bold, color: rgb(0, 0, 0) });
-  y += 18;
-  const who = [V.tournament, V.team1 && V.team2 ? `${V.team1} vs ${V.team2}` : '', V.ground, V.dates].map(clean).filter(Boolean).join('  |  ');
-  if (who) wrapW(who, font, 9).forEach(s => line(s, font, 9));
-  y += 10;
-  for (const [label, s] of items) {
-    y += 4;
-    line(label, bold);
-    wrapW(s, font, size).forEach(t => line(t));
-    y += 6;
-  }
-  if (V.refName) { y += 14; line(`Name of the Referee: ${clean(V.refName)}`, bold); }
 }
 
 // ---------- start ----------
