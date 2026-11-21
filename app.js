@@ -8,7 +8,10 @@ let V = load();
 let revealed = new Set();
 
 function load() {
-  try { return JSON.parse(localStorage.getItem(STORE)) || {}; } catch { return {}; }
+  let v = {};
+  try { v = JSON.parse(localStorage.getItem(STORE)) || {}; } catch {}
+  if (!v.signature && typeof DEFAULT_SIGNATURE === 'string') v.signature = DEFAULT_SIGNATURE;
+  return v;
 }
 function save() {
   try { localStorage.setItem(STORE, JSON.stringify(V)); } catch {}

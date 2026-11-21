@@ -1,5 +1,5 @@
-const CACHE = 'rr-v4';
-const FILES = ['./', 'index.html', 'style.css', 'spec.js', 'app.js', 'pdf-lib.min.js', 'form.pdf', 'manifest.webmanifest', 'icon-180.png', 'icon-192.png', 'icon-512.png', 'fonts/inter-latin.woff2',
+const CACHE = 'rr-v5';
+const FILES = ['./', 'index.html', 'style.css', 'spec.js', 'app.js', 'signature.js', 'pdf-lib.min.js', 'form.pdf', 'manifest.webmanifest', 'icon-180.png', 'icon-192.png', 'icon-512.png', 'fonts/inter-latin.woff2',
   ...['match', 'acc', 'food', 'teams1', 'teams2', 'practice', 'ground1', 'ground2', 'other', 'admin', 'selectors', 'pitchMD', 'pitchMD-notes', 'pitchLO', 'pitchLO-notes', 'sign'].map(s => `snips/${s}.webp`)];
 
 self.addEventListener('install', e => e.waitUntil(caches.open(CACHE).then(c => c.addAll(FILES)).then(() => self.skipWaiting())));
