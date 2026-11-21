@@ -66,6 +66,8 @@ h1 {
 .fine { margin: 4px 0 0; color: var(--slate); font-size: 14px; }
 
 /* home */
+.form-pick { margin-top: 16px; }
+.form-pick button { min-height: 44px; font-size: 15px; }
 .home-head { padding: 20px 0 24px; }
 .match-card {
   background: var(--forest);

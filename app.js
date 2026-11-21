@@ -1,25 +1,45 @@
-const STORE = 'mpcaRR.v1';
+const FORMS = [VENUE, UMPIRE];
+const FORM_KEY = 'mpcaRR.form';
 const { PDFDocument, StandardFonts, rgb, LineCapStyle } = PDFLib;
 const INK = rgb(0.02, 0.13, 0.45);
 const BAD = new Set(BAD_WORDS);
 const NON_PRINTABLE = /[^\x20-\x7E\xA0-\xFF‘’“”–—…\n\r\t]/;
 
+let F = FORMS.find(f => f.id === read(FORM_KEY)) || VENUE;
 let V = load();
 let revealed = new Set();
 
+function read(key) {
+  try { return localStorage.getItem(key); } catch { return null; }
+}
 function load() {
   let v = {};
-  try { v = JSON.parse(localStorage.getItem(STORE)) || {}; } catch {}
+  try { v = JSON.parse(read(F.store)) || {}; } catch {}
+  return defaults(v);
+}
+function defaults(v) {
+  if (F.prefill) {
+    let venue = {};
+    try { venue = JSON.parse(read(VENUE.store)) || {}; } catch {}
+    for (const [k, from] of Object.entries(F.prefill)) if (!v[k]) v[k] = typeof from === 'function' ? from(venue) : venue[from];
+  }
   if (!v.signature && typeof DEFAULT_SIGNATURE === 'string') v.signature = DEFAULT_SIGNATURE;
   if (!v.signDate) v.signDate = today();
   return v;
+}
+function switchForm(f) {
+  F = f;
+  try { localStorage.setItem(FORM_KEY, f.id); } catch {}
+  V = load();
+  revealed = new Set();
+  go('#/');
 }
 function today() {
   const d = new Date(), two = n => String(n).padStart(2, '0');
   return `${two(d.getDate())}/${two(d.getMonth() + 1)}/${d.getFullYear()}`;
 }
 function save() {
-  try { localStorage.setItem(STORE, JSON.stringify(V)); } catch {}
+  try { localStorage.setItem(F.store, JSON.stringify(V)); } catch {}
 }
 
 const $ = id => document.getElementById(id);
@@ -34,12 +54,12 @@ const el = (tag, attrs = {}, ...kids) => {
   return n;
 };
 const shown = cond => !cond || [].concat(cond[1]).includes(V[cond[0]]);
-const steps = () => SECTIONS.filter(s => shown(s.showIf));
-for (const s of SECTIONS) {
+const steps = () => F.sections.filter(s => shown(s.showIf));
+for (const s of FORMS.flatMap(f => f.sections)) {
   let g = null;
   for (const f of s.fields) { if (f.group) g = f; f.under = g; }
 }
-const allFields = () => SECTIONS.flatMap(s => s.fields.map(f => ({ ...f, section: s })));
+const allFields = () => F.sections.flatMap(s => s.fields.map(f => ({ ...f, section: s })));
 // "Team 2: Bhopal" for a field called "Rating", the field's own label otherwise
 const nameOf = f => (f.under && ['Rating', 'Hotel', 'Reason/s'].includes(f.label) ? groupLabel(f.under) : f.label);
 const filled = f => f.type === 'pair' ? !!(V[`${f.id}A`] || '').trim() : !!(V[f.id] || '').trim();
@@ -55,7 +75,7 @@ function badRatingsFor(f) {
 
 // fields a step still needs, a reason box only when something it covers is rated bad
 function required(s) {
-  return s.fields.filter(f => shown(f.showIf) && (f.reasonFor ? badRatingsFor(f).length > 0 : !f.optional));
+  return s.fields.filter(f => shown(f.showIf) && (f.reasonFor ? f.always || badRatingsFor(f).length > 0 : !f.optional));
 }
 function status(s) {
   const req = required(s);
@@ -87,11 +107,11 @@ function renderHome() {
   const doneCount = st.filter(x => x.complete).length;
   const next = list.find((s, i) => !st[i].complete);
 
-  const teams = V.team1 && V.team2;
+  const c = F.card(V);
   const card = el('div', { class: 'match-card' },
-    el('p', { class: 'eyebrow on-dark' }, [V.format, V.segment].filter(Boolean).join(' · ') || 'New match'),
-    el('p', { class: 'match-title' }, teams ? `${V.team1} vs ${V.team2}` : 'Start with the match details'),
-    teams ? el('p', { class: 'match-sub' }, [V.ground, V.dates].filter(Boolean).join(' · ')) : null,
+    el('p', { class: 'eyebrow on-dark' }, c.eyebrow.filter(Boolean).join(' · ') || 'New match'),
+    el('p', { class: 'match-title' }, c.title || 'Start with the match details'),
+    c.title ? el('p', { class: 'match-sub' }, c.sub.filter(Boolean).join(' · ')) : null,
     el('div', { class: 'meter', role: 'progressbar', 'aria-label': 'Steps done', 'aria-valuemin': 0, 'aria-valuemax': list.length, 'aria-valuenow': doneCount },
       el('span', { style: `width:${(doneCount / list.length) * 100}%` })),
     el('p', { class: 'match-sub' }, `${doneCount} of ${list.length} steps done`));
@@ -106,10 +126,14 @@ function renderHome() {
       chevron()));
   }));
 
+  const pick = el('div', { class: 'seg form-pick', role: 'group', 'aria-label': 'Which report', style: `--n:${FORMS.length}` },
+    FORMS.map(f => el('button', { type: 'button', 'aria-pressed': String(f === F), onclick: () => f !== F && switchForm(f) }, f.name)));
+
   v.replaceChildren(
+    pick,
     el('header', { class: 'home-head' },
       el('p', { class: 'eyebrow' }, 'MPCA 2026-27'),
-      el('h1', {}, 'Referee report'),
+      el('h1', {}, F.title),
       el('p', { class: 'lede', lang: 'hi' }, 'हर स्टेप में ऊपर फ़ॉर्म का वही हिस्सा दिखेगा जो आप भर रहे हैं।')),
     card, rows,
     el('div', { class: 'home-foot' },
@@ -224,7 +248,7 @@ function input(f, key, placeholder) {
 
 function changed(f) {
   save();
-  const s = SECTIONS.find(x => x.fields.some(g => g.id === f.id));
+  const s = F.sections.find(x => x.fields.some(g => g.id === f.id));
   for (const g of s.fields) {
     const w = $(`fw-${g.id}`);
     if (w && g.showIf) w.hidden = !shown(g.showIf);
@@ -331,10 +355,9 @@ function renderFinish() {
       el('h2', { class: 'group' }, 'Worth a look before sending'),
       el('ul', {}, issues.map(([t, step]) => el('li', {}, el('span', {}, t), step ? el('a', { href: `#/step/${step}`, class: 'link' }, 'Fix') : null)))) : null,
     el('div', { class: 'send-note' },
-      el('h2', { class: 'group' }, 'Send within 72 hours to'),
-      el('p', {}, 'cricket.operations@mpcaonline.com'),
-      el('p', {}, 'moreports@mpcaonline.com'),
-      el('p', { class: 'fine' }, 'or in a sealed envelope to the MPCA office')));
+      el('h2', { class: 'group' }, F.sendHead),
+      F.sendTo.map(t => el('p', {}, t)),
+      F.envelope ? el('p', { class: 'fine' }, 'or in a sealed envelope to the MPCA office') : null));
   setBar([
     el('button', { type: 'button', class: 'pill ghost act', disabled: true, onclick: downloadPdf }, 'Save to Files'),
     el('button', { type: 'button', class: 'pill primary act', disabled: true, onclick: sharePdf }, 'Share'),
@@ -344,8 +367,8 @@ function renderFinish() {
 
 function checks() {
   const out = [];
-  if (!V.format) out.push(['Format is not chosen, so no pitch page will be filled.', 'match']);
-  if (!V.refName) out.push(["Referee's name is empty.", 'match']);
+  if (!V.format) out.push([F.formatNote, F.sections[0].id]);
+  if (!V.refName) out.push(["Referee's name is empty.", F.sections[0].id]);
   for (const s of steps()) {
     for (const f of s.fields) if (f.reasonFor && badRatingsFor(f).length && !(V[f.id] || '').trim()) out.push([`${title(s)}: the reason box is empty but something is marked bad.`, s.id]);
   }
@@ -389,8 +412,7 @@ function downloadPdf() {
 }
 
 function newMatch() {
-  V = Object.fromEntries(allFields().filter(f => f.keep).map(f => [f.id, V[f.id]]));
-  V.signDate = today();
+  V = defaults(Object.fromEntries(allFields().filter(f => f.keep).map(f => [f.id, V[f.id]])));
   revealed = new Set();
   save();
   $('new-dialog').close();
@@ -403,11 +425,11 @@ function fileName() {
   const cat = (V.category || '').split(' ')[0];
   const fmt = (FORMATS.find(f => f[1] === V.format) || [''])[0];
   const no = (V.matchNo || '').replace(/\D/g, '');
-  return no && cat && fmt ? `${no}${cat}${fmt}RVR.pdf` : 'Referee Report.pdf';
+  return no && cat && fmt ? `${no}${cat}${fmt}${F.code}.pdf` : F.fallback;
 }
 
 async function buildPdf() {
-  const doc = await PDFDocument.load(await (await fetch('form.pdf')).arrayBuffer());
+  const doc = await PDFDocument.load(await (await fetch(F.pdf)).arrayBuffer());
   const font = await doc.embedFont(StandardFonts.Helvetica);
   const bold = await doc.embedFont(StandardFonts.HelveticaBold);
   const pages = doc.getPages();
@@ -505,14 +527,17 @@ async function buildPdf() {
         x: cx - s / 2, y: H - (cy - s / 2) + 0.4, scale: k, borderColor: INK, borderWidth: 1.5 / k,
         borderLineCap: LineCapStyle ? LineCapStyle.Round : undefined,
       });
+    } else if (m.say) {
+      const size = 12, w = bold.widthOfTextAtSize(m.say, size);
+      page.drawText(m.say, { x: m.at[0] - w / 2, y: H - m.at[1] - size * 0.35, size, font: bold, color: INK });
     } else if (m.oval) {
       const [x0, y0, x1, y1] = m.oval;
       page.drawEllipse({ x: (x0 + x1) / 2, y: H - (y0 + y1) / 2 - 0.3, xScale: (x1 - x0) / 2 + 2.2, yScale: (y1 - y0) / 2 + 2.4, borderColor: INK, borderWidth: 0.9 });
     }
   }
 
-  const pitchPage = V.format === 'Multi-day' ? 6 : V.format ? 7 : null;
-  for (const s of SECTIONS) {
+  const pitchPage = F.pitchHeaders && V.format ? (V.format === 'Multi-day' ? 6 : 7) : null;
+  for (const s of F.sections) {
     if (!shown(s.showIf)) continue;
     for (const f of s.fields) {
       if (!shown(f.showIf)) continue;
@@ -536,7 +561,7 @@ async function buildPdf() {
     }
   }
   if (pitchPage) {
-    for (const [k, pl] of Object.entries(PITCH_HEADERS[pitchPage])) text({ p: pitchPage, ...pl }, clean(V[k]));
+    for (const [k, pl] of Object.entries(F.pitchHeaders[pitchPage])) text({ p: pitchPage, ...pl }, clean(V[k]));
   }
 
   const note = clean(V.extra);
@@ -567,4 +592,4 @@ document.addEventListener('DOMContentLoaded', () => {
   if ('serviceWorker' in navigator && location.protocol === 'https:') navigator.serviceWorker.register('sw.js');
 });
 
-window.__test = { buildPdf, fileName, setValues: v => { V = v; save(); route(); } };
+window.__test = { buildPdf, fileName, setValues: v => { V = v; save(); route(); }, switchForm: id => switchForm(FORMS.find(f => f.id === id)) };

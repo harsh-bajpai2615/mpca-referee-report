@@ -205,3 +205,10 @@ const PITCH_HEADERS = {
   6: { tournament: { x: 99, b: 96.8, w: 133 }, team1: { x: 265, b: 96.8, w: 94 }, team2: { x: 381, b: 96.8, w: 94 }, ground: { x: 77, b: 118, w: 119 }, dates: { x: 234, b: 118, w: 122 } },
   7: { tournament: { x: 103, b: 91.3, w: 122 }, team1: { x: 258, b: 91.3, w: 116 }, team2: { x: 396, b: 91.3, w: 105 }, ground: { x: 82, b: 112.6, w: 162 }, dates: { x: 281, b: 112.6, w: 143 } },
 };
+
+const VENUE = {
+  id: 'venue', name: 'Venue report', title: 'Referee report', store: 'mpcaRR.v1', pdf: 'form.pdf', sections: SECTIONS, pitchHeaders: PITCH_HEADERS,
+  code: 'RVR', fallback: 'Referee Report.pdf', formatNote: 'Format is not chosen, so no pitch page will be filled.',
+  sendHead: 'Send within 72 hours to', sendTo: ['cricket.operations@mpcaonline.com', 'moreports@mpcaonline.com'], envelope: true,
+  card: V => ({ eyebrow: [V.format, V.segment], title: V.team1 && V.team2 ? `${V.team1} vs ${V.team2}` : '', sub: [V.ground, V.dates] }),
+};
