@@ -11,7 +11,12 @@ function load() {
   let v = {};
   try { v = JSON.parse(localStorage.getItem(STORE)) || {}; } catch {}
   if (!v.signature && typeof DEFAULT_SIGNATURE === 'string') v.signature = DEFAULT_SIGNATURE;
+  if (!v.signDate) v.signDate = today();
   return v;
+}
+function today() {
+  const d = new Date(), two = n => String(n).padStart(2, '0');
+  return `${two(d.getDate())}/${two(d.getMonth() + 1)}/${d.getFullYear()}`;
 }
 function save() {
   try { localStorage.setItem(STORE, JSON.stringify(V)); } catch {}
@@ -385,6 +390,7 @@ function downloadPdf() {
 
 function newMatch() {
   V = Object.fromEntries(allFields().filter(f => f.keep).map(f => [f.id, V[f.id]]));
+  V.signDate = today();
   revealed = new Set();
   save();
   $('new-dialog').close();
@@ -403,6 +409,7 @@ function fileName() {
 async function buildPdf() {
   const doc = await PDFDocument.load(await (await fetch('form.pdf')).arrayBuffer());
   const font = await doc.embedFont(StandardFonts.Helvetica);
+  const bold = await doc.embedFont(StandardFonts.HelveticaBold);
   const pages = doc.getPages();
   const H = pages[0].getHeight();
   const chars = new Set(font.getCharacterSet());
@@ -530,6 +537,18 @@ async function buildPdf() {
   }
   if (pitchPage) {
     for (const [k, pl] of Object.entries(PITCH_HEADERS[pitchPage])) text({ p: pitchPage, ...pl }, clean(V[k]));
+  }
+
+  const note = clean(V.extra);
+  if (note) {
+    const W = pages[0].getWidth(), L = 46, size = 10, lead = 14;
+    let page = doc.addPage([W, H]), y = 84;
+    page.drawText('ADDITIONAL NOTE', { x: L, y: H - 60, size: 12, font: bold, color: rgb(0, 0, 0) });
+    for (const l of wrap(note, W - L * 2, size)) {
+      if (y > H - 60) { page = doc.addPage([W, H]); y = 60; }
+      page.drawText(l, { x: L, y: H - y, size, font, color: INK });
+      y += lead;
+    }
   }
 
   doc.setTitle(fileName().replace(/\.pdf$/, ''));

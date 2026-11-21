@@ -194,6 +194,8 @@ const SECTIONS = [
     id: 'sign', num: '', title: 'Signature', hi: 'हस्ताक्षर', page: 7, snip: 'sign',
     fields: [
       { id: 'signature', label: 'Sign with your finger', hint: 'Done once, kept for every match', type: 'sign', keep: true, optional: true, put: [{ p: 7, img: [342, 606, 490, 634] }] },
+      { id: 'signDate', label: 'Date', hint: 'Printed under the signature', type: 'text', placeholder: '21/11/2026', inputmode: 'numeric', prefix: 'Date: ', put: [{ p: 7, x: 343, b: 646.5, w: 147, size: 8, room: [638.5, 648] }] },
+      { id: 'extra', group: 'Additional note', label: 'Note', hint: 'Optional. Printed alone on a separate page after the form', type: 'area', optional: true, put: [] },
     ],
   },
 ];
